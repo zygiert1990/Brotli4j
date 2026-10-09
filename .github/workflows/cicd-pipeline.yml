@@ -23,6 +23,17 @@ permissions:
 
 jobs:
 
+  # Temporary FFM migration probe; replace with the final ARM jobs in step 8.
+  Linux-ArmV7-Native-Runner-Probe:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Show host architecture
+        run: uname -m
+      # Deliberately omit QEMU setup to probe native armv7 execution.
+      - name: Probe armv7 container without QEMU setup
+        run: docker run --rm --platform linux/arm/v7 arm32v7/debian:trixie uname -m
+
   MacOS-x86_64-Build-JDK8:
     runs-on: macos-15
     steps:
