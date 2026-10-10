@@ -297,7 +297,7 @@ jobs:
             -v "${HOME}/.m2/repository:/root/.m2/repository" \
             -w /code \
             ghcr.io/hyperxpro/brotli4j:armv7-ubuntu1804-jdk8 \
-            bash -ec '
+            setarch linux32 bash -ec '
               bash ./mvnw -B --show-version -ntp clean package
             '
 
@@ -716,11 +716,17 @@ jobs:
       - name: Verify DLL Architecture
         run: |
           dumpbin /headers "natives\windows-aarch64\target\classes\lib\windows-aarch64\brotli.dll" | findstr /C:"machine (ARM64)" || exit /b 1
+      - name: Resolve artifact directory
+        id: artifact-directory
+        shell: pwsh
+        run: |
+          $artifactRoot = Split-Path -Path $env:GITHUB_WORKSPACE -Parent
+          "path=$artifactRoot" >> $env:GITHUB_OUTPUT
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
           name: Windows-ARM-Build-JDK17
-          path: ${{ github.workspace }}/../
+          path: ${{ steps.artifact-directory.outputs.path }}
 
   Windows-ARM-Build-JDK21:
     runs-on: windows-11-arm
