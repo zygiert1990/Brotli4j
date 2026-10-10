@@ -759,6 +759,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Install native inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils llvm
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
@@ -773,6 +777,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Install native inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils llvm
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
