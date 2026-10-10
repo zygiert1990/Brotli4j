@@ -77,4 +77,13 @@ add_library (brotli ${LIB_TYPE}
                 		"natives/src/main/cpp/encoder_jni.cc"
                 )
 
+# Export the C API alongside JNI for Foreign Function & Memory downcalls.
+# All three Brotli components are compiled into this single shared library.
+target_compile_definitions(brotli PRIVATE
+    BROTLI_SHARED_COMPILATION
+    BROTLICOMMON_SHARED_COMPILATION
+    BROTLIDEC_SHARED_COMPILATION
+    BROTLIENC_SHARED_COMPILATION
+)
+
 SET_TARGET_PROPERTIES (brotli PROPERTIES LINKER_LANGUAGE CXX)
