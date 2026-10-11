@@ -26,14 +26,25 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class EncoderTest {
 
     private static final byte[] compressedData = new byte[]{-117, 1, -128, 77, 101, 111, 119, 3};
+    private static final int quality = 5;
+    private static final int lgwin = 16;
+    // "Some long text, very long text" compressed with quality and lgwin above.
+    private static final byte[] compressedWithQualityAndWindow = new byte[]{
+            -94, 3, 0, -128, -128, 110, 44, -43, -47, 109, -51, -112, 31, 69, -112,
+            35, 90, -86, 0, 85, -125, 37, -69, 68, 28, -84, 115, -80, -102, 7};
+    private static final byte[] dictionary = "Some dictionary content shared by encoder and decoder".getBytes();
 
     @BeforeAll
     static void load() {
@@ -106,6 +117,49 @@ class EncoderTest {
             brotliOutputStream.close();
             byteArrayOutputStream.close();
             assertArrayEquals(expectedCompression, byteArrayOutputStream.toByteArray());  // Otherwise the GC already cleared the data
+        }
+    }
+
+    @Test
+    void compressWithQualityAndWindow() throws IOException {
+        // A lost or swapped quality / lgwin parameter still round-trips but changes the bytes.
+        assertArrayEquals(compressedWithQualityAndWindow,
+                Encoder.compress("Some long text, very long text".getBytes(), Encoder.Parameters.create(quality, lgwin)));
+    }
+
+    @Test
+    void prepareDictionaryErrors() {
+        // Capacity must be in (0, 2^30).
+        assertThrows(IllegalStateException.class,
+                () -> Encoder.prepareDictionary(ByteBuffer.allocateDirect(0), 0));
+        // Serialized dictionaries need BROTLI_EXPERIMENTAL, which the native library is built without.
+        assertThrows(IllegalStateException.class,
+                () -> Encoder.prepareDictionary(BrotliCommon.makeNative(dictionary), 1));
+    }
+
+    @Test
+    void closePreparedDictionaryTwice() throws Exception {
+        // Native prepared dictionaries implement AutoCloseable; close() frees native memory.
+        AutoCloseable prepared = (AutoCloseable) Encoder.prepareDictionary(BrotliCommon.makeNative(dictionary), 0);
+        prepared.close();
+        // The second close passes null to native code, which ignores it.
+        assertDoesNotThrow(prepared::close);
+    }
+
+    @Test
+    void failedAttachStillUsesDictionarySlot() throws Exception {
+        PreparedDictionary prepared = Encoder.prepareDictionary(BrotliCommon.makeNative(dictionary), 0);
+        EncoderJNI.Wrapper encoder = new EncoderJNI.Wrapper(1024, -1, -1, null);
+        try {
+            // Unknown magic is rejected by Brotli, but the binding still counts the slot.
+            for (int i = 0; i < 15; i++) {
+                assertFalse(encoder.attachDictionary(ByteBuffer.allocateDirect(16)));
+            }
+            assertFalse(encoder.attachDictionary(prepared.getData()));
+        } finally {
+            encoder.destroy();
+            // Native prepared dictionaries implement AutoCloseable; free only after the encoder is destroyed.
+            ((AutoCloseable) prepared).close();
         }
     }
 }
