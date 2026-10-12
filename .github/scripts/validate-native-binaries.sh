@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # Validates that native binaries are present, non-empty, and built for the
-# correct architecture. Optionally copies them from a release bundle first.
+# correct architecture, with the C exports required by FFM. Optionally copies
+# them from a release bundle first. Requires readelf, llvm-readobj and
+# llvm-objdump (Ubuntu: apt-get install binutils llvm).
 #
 # Architecture detection uses proper binary inspection tools:
 #   ELF    -> readelf -h  (Machine, Class, endianness)
@@ -13,10 +15,11 @@
 #   validate-native-binaries.sh osx-x86_64 osx-aarch64   # validate specific platforms in-place
 #   validate-native-binaries.sh                           # validate all 10 platforms in-place
 #
-# Exits non-zero if any binary is missing, empty, or has the wrong architecture.
+# Exits non-zero for missing/invalid binaries, missing exports or inspection failures.
 #
 
 set -euo pipefail
+export LC_ALL=C
 
 BUNDLE=""
 if [ "${1:-}" = "--bundle" ]; then
@@ -36,9 +39,32 @@ NATIVES=(
     "Linux-riscv64-Build-JDK11:linux-riscv64:libbrotli.so:riscv64"
     "Linux-s390x-Build-JDK8:linux-s390x:libbrotli.so:s390x"
     "Windows-x86_64-Build-JDK8:windows-x86_64:brotli.dll:x86_64"
-    "Windows-ARM-Build-JDK8:windows-aarch64:brotli.dll:arm64"
+    "Windows-ARM-Build-JDK17:windows-aarch64:brotli.dll:arm64"
     "MacOS-x86_64-Build-JDK8:osx-x86_64:libbrotli.dylib:x86_64"
     "MacOS-x86_64-Build-JDK8:osx-aarch64:libbrotli.dylib:arm64"
+)
+
+# C entry points used by the JNI wrappers and required by the direct FFM port.
+REQUIRED_EXPORTS=(
+    BrotliGetDictionary
+    BrotliSetDictionaryData
+    BrotliDecoderCreateInstance
+    BrotliDecoderDestroyInstance
+    BrotliDecoderDecompressStream
+    BrotliDecoderHasMoreOutput
+    BrotliDecoderTakeOutput
+    BrotliDecoderIsFinished
+    BrotliDecoderAttachDictionary
+    BrotliEncoderCreateInstance
+    BrotliEncoderDestroyInstance
+    BrotliEncoderSetParameter
+    BrotliEncoderCompressStream
+    BrotliEncoderHasMoreOutput
+    BrotliEncoderIsFinished
+    BrotliEncoderTakeOutput
+    BrotliEncoderPrepareDictionary
+    BrotliEncoderDestroyPreparedDictionary
+    BrotliEncoderAttachPreparedDictionary
 )
 
 should_check() {
@@ -223,6 +249,50 @@ check_deps() {
     return 0
 }
 
+# Inspect runtime exports, not strings or the full (possibly private) symbol table.
+# LLVM handles both Windows architectures and Mach-O on the Linux release runner.
+exported_symbols() {
+    local lib="$1" platform="$2" arch="$3"
+    case "$platform" in
+        linux-*)
+            # Ndx and Name are read from the end: ppc64le inserts "[<localentry>: 8]".
+            readelf --dyn-syms --wide "$lib" |
+                awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") &&
+                     ($6 == "DEFAULT" || $6 == "PROTECTED") && $(NF-1) != "UND" {
+                         name = $NF; sub(/@.*/, "", name); print name
+                     }'
+            ;;
+        windows-*)
+            llvm-readobj --coff-exports "$lib" | awk '$1 == "Name:" {print $2}'
+            ;;
+        osx-*)
+            # Select the requested slice if the library is universal. Mach-O adds
+            # an underscore to C names; loaderLookup uses the undecorated name.
+            llvm-objdump --macho --arch="$arch" --exports-trie "$lib" |
+                awk '$1 ~ /^0x/ {sub(/^_/, "", $2); print $2}'
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+check_exports() {
+    local lib="$1" platform="$2" arch="$3"
+    local symbols symbol missing=0
+    # An empty list means the tool could not read the exports (e.g. LLVM 14
+    # cannot read LC_DYLD_EXPORTS_TRIE); every binary exports JNI symbols.
+    if ! symbols=$(exported_symbols "$lib" "$platform" "$arch") || [ -z "$symbols" ]; then
+        echo "FAIL  ${platform} - could not inspect C exports (check inspection tools)"
+        return 1
+    fi
+    for symbol in "${REQUIRED_EXPORTS[@]}"; do
+        if ! grep -Fxq "$symbol" <<< "$symbols"; then
+            echo "FAIL  ${platform} - missing C export: ${symbol}"
+            missing=1
+        fi
+    done
+    return "$missing"
+}
+
 # ── Per-platform check ──
 
 check_native() {
@@ -297,6 +367,8 @@ check_native() {
         return 1
     fi
 
+    check_exports "$lib" "$platform" "$expected_arch" || return 1
+
     # Best-effort dependency check (only effective for native-arch ELF)
     if ! check_deps "$lib"; then
         echo "FAIL  ${platform} - missing shared library dependencies"
@@ -305,7 +377,7 @@ check_native() {
 
     local size
     size=$(wc -c < "$lib" | tr -d ' ')
-    echo "OK    ${platform} (${arch}, ${bits}-bit, ${size} bytes)"
+    echo "OK    ${platform} (${arch}, ${bits}-bit, ${size} bytes, ${#REQUIRED_EXPORTS[@]} C exports)"
     return 0
 }
 
