@@ -21,147 +21,69 @@ permissions:
   contents: read
   packages: read
 
+# Java is built once (JDK 25: Java 8 classes plus FFM classes under META-INF/versions/22) and each
+# native library once, in its usual environment. Test jobs only run the compiled tests against these
+# artifacts (.github/test-harness); on JDK 25 the suite runs twice, FFM and JNI.
+
 jobs:
 
-  MacOS-x86_64-Build-JDK8:
-    runs-on: macos-15
+  Build-Java:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Set up JDK 8
+      - name: Set up JDK 25
         uses: actions/setup-java@v6
         with:
-          distribution: 'corretto'
-          java-version: 8
-      - name: Build with Maven
-        run: mvn -B --show-version -ntp clean package --file pom.xml
+          distribution: 'temurin'
+          java-version: 25
+          cache: maven
+      # !linux-x86_64: no host native dependency. !jdk17+: tests compiled against JUnit 5 to run on JDK 8.
+      - name: Build brotli4j and service
+        run: ./mvnw -B --show-version -ntp -pl service,brotli4j -am -P '!linux-x86_64,!jdk17+' -DskipTests package
+      - name: Check multi-release JAR
+        run: |
+          bash .github/scripts/check-multi-release-jar.sh \
+            "$(ls brotli4j/target/brotli4j-*.jar | grep -v -e '-sources.jar$' -e '-javadoc.jar$')" \
+            brotli4j/src/main/java22
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
-          name: MacOS-x86_64-Build-JDK8
-          path: /Users/runner/work/Brotli4j/
+          name: java
+          path: |
+            brotli4j/target/brotli4j-*.jar
+            brotli4j/target/test-classes/
+            service/target/service-*.jar
+            !**/*-sources.jar
+            !**/*-javadoc.jar
 
-  MacOS-x86_64-Build-JDK11:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK 11
-        uses: actions/setup-java@v6
-        with:
-          distribution: 'corretto'
-          java-version: 11
-      - name: Build with Maven
-        run: mvn -B --show-version -ntp --file pom.xml clean package
-
-  MacOS-x86_64-Build-JDK17:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK 17
-        uses: actions/setup-java@v6
-        with:
-          distribution: 'corretto'
-          java-version: 17
-      - name: Build with Maven
-        run: mvn -B --show-version -ntp --file pom.xml clean package
-
-  MacOS-x86_64-Build-JDK21:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          distribution: 'corretto'
-          java-version: 21
-      - name: Build with Maven
-        run: mvn -B --show-version -ntp --file pom.xml clean package
-
-  Linux-x86_64-Build-JDK8:
+  Native-linux-x86_64:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build in prebuilt CentOS 6 container
         run: |
-          IMAGE=ghcr.io/hyperxpro/brotli4j:x86_64-centos6-jdk8
-          docker pull "$IMAGE"
           docker run --rm \
             -v "${{ github.workspace }}:/code" \
             -v "${HOME}/.m2:/root/.m2" \
             -w /code \
-            "$IMAGE" \
-            mvn -B --show-version -ntp clean package --file pom.xml
+            ghcr.io/hyperxpro/brotli4j:x86_64-centos6-jdk8 \
+            mvn -B --show-version -ntp -pl natives/linux-x86_64 -am -DskipTests package
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-x86_64-Build-JDK8
-          path: /home/runner/work/Brotli4j/
+          name: native-linux-x86_64
+          path: natives/linux-x86_64/target
 
-  Linux-x86_64-Build-JDK11:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-      - name: Build in prebuilt CentOS 6 container
-        run: |
-          IMAGE=ghcr.io/hyperxpro/brotli4j:x86_64-centos6-jdk11
-          docker pull "$IMAGE"
-          docker run --rm \
-            -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2:/root/.m2" \
-            -w /code \
-            "$IMAGE" \
-            mvn -B --show-version -ntp clean package --file pom.xml
-
-  Linux-x86_64-Build-JDK17:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-      - name: Build in prebuilt CentOS 6 container
-        run: |
-          IMAGE=ghcr.io/hyperxpro/brotli4j:x86_64-centos6-jdk17
-          docker pull "$IMAGE"
-          docker run --rm \
-            -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2:/root/.m2" \
-            -w /code \
-            "$IMAGE" \
-            mvn -B --show-version -ntp clean package --file pom.xml
-
-  Linux-x86_64-Build-JDK21:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-      - name: Build in prebuilt CentOS 6 container
-        run: |
-          IMAGE=ghcr.io/hyperxpro/brotli4j:x86_64-centos6-jdk21
-          docker pull "$IMAGE"
-          docker run --rm \
-            -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2:/root/.m2" \
-            -w /code \
-            "$IMAGE" \
-            mvn -B --show-version -ntp clean package --file pom.xml
-
-  Linux-Aarch64-Build-JDK8:
+  Native-linux-aarch64:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk8-aarch64
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ env.cache-name }}-
-            ${{ runner.os }}-pr-
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -175,115 +97,17 @@ jobs:
             -v "${HOME}/.m2/repository:/root/.m2/repository" \
             -w /code \
             ghcr.io/hyperxpro/brotli4j:aarch64-ubuntu1804-jdk8 \
-            bash -ec '
-              bash ./mvnw -B --show-version -ntp clean package
-            '
-
+            bash ./mvnw -B --show-version -ntp -pl natives/linux-aarch64 -am -DskipTests package
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-Aarch64-Build-JDK8
-          path: /home/runner/work/Brotli4j/
+          name: native-linux-aarch64
+          path: natives/linux-aarch64/target
 
-  Linux-Aarch64-Build-JDK11:
+  Native-linux-armv7:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk11-aarch64
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build in prebuilt ARM container
-        run: |
-          docker run --rm --platform linux/arm64/v8 \
-            -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2/repository:/root/.m2/repository" \
-            -w /code \
-            ghcr.io/hyperxpro/brotli4j:aarch64-ubuntu1804-jdk11 \
-            bash -ec '
-              bash ./mvnw -B --show-version -ntp clean package
-            '
-
-  Linux-Aarch64-Build-JDK17:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk17-aarch64
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build in prebuilt ARM container
-        run: |
-          docker run --rm --platform linux/arm64/v8 \
-            -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2/repository:/root/.m2/repository" \
-            -w /code \
-            ghcr.io/hyperxpro/brotli4j:aarch64-ubuntu1804-jdk17 \
-            bash -ec '
-              bash ./mvnw -B --show-version -ntp clean package
-            '
-
-  Linux-Aarch64-Build-JDK21:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk21-aarch64
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build in prebuilt ARM container
-        run: |
-          docker run --rm --platform linux/arm64/v8 \
-            -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2/repository:/root/.m2/repository" \
-            -w /code \
-            ghcr.io/hyperxpro/brotli4j:aarch64-ubuntu2004-jdk21 \
-            bash -ec '
-              bash ./mvnw -B --show-version -ntp clean package
-            '
-
-  Linux-ArmV7-Build-JDK8:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk8-arm7
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -297,126 +121,67 @@ jobs:
             -v "${HOME}/.m2/repository:/root/.m2/repository" \
             -w /code \
             ghcr.io/hyperxpro/brotli4j:armv7-ubuntu1804-jdk8 \
-            setarch linux32 bash -ec '
-              bash ./mvnw -B --show-version -ntp clean package
-            '
-
+            setarch linux32 bash ./mvnw -B --show-version -ntp -pl natives/linux-armv7 -am -DskipTests package
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-ArmV7-Build-JDK8
-          path: /home/runner/work/Brotli4j/
+          name: native-linux-armv7
+          path: natives/linux-armv7/target
 
-  Linux-ArmV7-Build-JDK11:
-    runs-on: ubuntu-24.04-arm
+  Native-linux-s390x:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk11-armv7
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build in prebuilt ARM container
+      - uses: docker/setup-qemu-action@v4
+      - name: Build in prebuilt s390x container
         run: |
-          docker run --rm --platform linux/arm/v7 \
+          docker run --rm --platform linux/s390x \
             -v "${{ github.workspace }}:/code" \
             -v "${HOME}/.m2/repository:/root/.m2/repository" \
             -w /code \
-            ghcr.io/hyperxpro/brotli4j:armv7-ubuntu1804-jdk11 \
-            bash -ec '
-              bash ./mvnw -B --show-version -ntp clean package
-            '
+            ghcr.io/hyperxpro/brotli4j:s390x-ubuntu2004-jdk8 \
+            bash ./mvnw -B --show-version -ntp -pl natives/linux-s390x -am -DskipTests package
+      - name: Upload the build
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-linux-s390x
+          path: natives/linux-s390x/target
 
-  Linux-ArmV7-Build-JDK17:
-    runs-on: ubuntu-24.04-arm
+  Native-linux-ppc64le:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk11-armv7
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build in prebuilt ARM container
+      - uses: docker/setup-qemu-action@v4
+      - name: Build in prebuilt ppc64le container
         run: |
-          docker run --rm --platform linux/arm/v7 \
+          docker run --rm --platform linux/ppc64le \
             -v "${{ github.workspace }}:/code" \
             -v "${HOME}/.m2/repository:/root/.m2/repository" \
             -w /code \
-            ghcr.io/hyperxpro/brotli4j:armv7-ubuntu1804-jdk17 \
-            bash -ec '
-              bash ./mvnw -B --show-version -ntp clean package
-            '
-
-  Linux-s390x-Build-JDK8:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk8-s390x
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-qemu-action@v4
-      - uses: uraimo/run-on-arch-action@v3.2.0
-        name: Run commands
-        id: runcmd
-        with:
-          arch: none
-          distro: none
-          base_image: --platform=linux/s390x ghcr.io/hyperxpro/brotli4j:s390x-ubuntu2004-jdk8
-
-          dockerRunArgs: |
-            --volume "/home/runner/.m2/repository/:/root/.m2/repository"
-
-          run: |
-            chmod +x ./mvnw
-            ./mvnw -B --show-version -ntp clean package
-
+            ghcr.io/hyperxpro/brotli4j:ppc64le-ubuntu2004-jdk8 \
+            bash ./mvnw -B --show-version -ntp -pl natives/linux-ppc64le -am -DskipTests package
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-s390x-Build-JDK8
-          path: /home/runner/work/Brotli4j/
+          name: native-linux-ppc64le
+          path: natives/linux-ppc64le/target
 
-  Linux-s390x-Build-JDK11:
+  Native-linux-riscv64:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk8-s390x
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -424,209 +189,47 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-qemu-action@v4
-      - uses: uraimo/run-on-arch-action@v3.2.0
-        name: Run commands
-        id: runcmd
-        with:
-          arch: none
-          distro: none
-          base_image: --platform=linux/s390x ghcr.io/hyperxpro/brotli4j:s390x-ubuntu2004-jdk11
-
-          dockerRunArgs: |
-            --volume "/home/runner/.m2/repository/:/root/.m2/repository"
-
-          run: |
-            chmod +x ./mvnw
-            ./mvnw -B --show-version -ntp clean package
-
-  Linux-ppc64le-Build-JDK8:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk8-ppc64le
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-qemu-action@v4
-      - uses: uraimo/run-on-arch-action@v3.2.0
-        name: Run commands
-        id: runcmd
-        with:
-          arch: none
-          distro: none
-          base_image: --platform=linux/ppc64le ghcr.io/hyperxpro/brotli4j:ppc64le-ubuntu2004-jdk8
-
-          dockerRunArgs: |
-            --volume "/home/runner/.m2/repository/:/root/.m2/repository"
-
-          run: |
-            chmod +x ./mvnw
-            ./mvnw -B -ntp clean package
-      - name: Upload the build
-        uses: actions/upload-artifact@v7
-        with:
-          name: Linux-ppc64le-Build-JDK8
-          path: /home/runner/work/Brotli4j/
-
-  Linux-ppc64le-Build-JDK11:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk11-ppc64le
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-qemu-action@v4
-      - uses: uraimo/run-on-arch-action@v3.2.0
-        name: Run commands
-        id: runcmd
-        with:
-          arch: none
-          distro: none
-          base_image: --platform=linux/ppc64le ghcr.io/hyperxpro/brotli4j:ppc64le-ubuntu2004-jdk11
-
-          dockerRunArgs: |
-            --volume "/home/runner/.m2/repository/:/root/.m2/repository"
-
-          run: |
-            chmod +x ./mvnw
-            ./mvnw -B -ntp clean package
-
-  Linux-riscv64-Build-JDK11:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk11-riscv64
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-qemu-action@v4
-      - uses: uraimo/run-on-arch-action@v3.2.0
-        name: Run commands
-        id: runcmd
-        with:
-          arch: none
-          distro: none
-          base_image: --platform=linux/riscv64 ghcr.io/hyperxpro/brotli4j:riscv64-ubuntu2004-jdk11
-
-          dockerRunArgs: |
-            --volume "/home/runner/.m2/repository/:/root/.m2/repository"
-
-          run: |
-            export MAVEN_OPTS="-Djdk.lang.Process.launchMechanism=vfork"
-            chmod +x ./mvnw
-            ./mvnw -B --show-version -ntp clean package
-
+      - name: Build in prebuilt riscv64 container
+        run: |
+          docker run --rm --platform linux/riscv64 \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            -e MAVEN_OPTS="-Djdk.lang.Process.launchMechanism=vfork" \
+            ghcr.io/hyperxpro/brotli4j:riscv64-ubuntu2004-jdk11 \
+            bash ./mvnw -B --show-version -ntp -pl natives/linux-riscv64 -am -DskipTests package
       - name: Fix file permissions
-        run: sudo chmod -R a+r /home/runner/work/Brotli4j/
-
+        run: sudo chmod -R a+r natives/linux-riscv64/target
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-riscv64-Build-JDK11
-          path: /home/runner/work/Brotli4j/
+          name: native-linux-riscv64
+          path: natives/linux-riscv64/target
 
-  Linux-riscv64-Build-JDK17:
-    runs-on: ubuntu-latest
+  # Builds both macOS libraries on arm64.
+  Native-osx:
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk17-riscv64
+      - name: Set up JDK 8
+        uses: actions/setup-java@v6
         with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
+          distribution: 'corretto'
+          java-version: 8
+      - name: Build with Maven
+        run: mvn -B --show-version -ntp -pl natives/osx-x86_64,natives/osx-aarch64 -am -DskipTests package
+      - name: Upload the x86_64 build
+        uses: actions/upload-artifact@v7
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-qemu-action@v4
-      - uses: uraimo/run-on-arch-action@v3.2.0
-        name: Run commands
-        id: runcmd
+          name: native-osx-x86_64
+          path: natives/osx-x86_64/target
+      - name: Upload the aarch64 build
+        uses: actions/upload-artifact@v7
         with:
-          arch: none
-          distro: none
-          base_image: --platform=linux/riscv64 ghcr.io/hyperxpro/brotli4j:riscv64-ubuntu2004-jdk17
+          name: native-osx-aarch64
+          path: natives/osx-aarch64/target
 
-          dockerRunArgs: |
-            --volume "/home/runner/.m2/repository/:/root/.m2/repository"
-
-          run: |
-            export MAVEN_OPTS="-Djdk.lang.Process.launchMechanism=vfork"
-            chmod +x ./mvnw
-            ./mvnw -B --show-version -ntp clean package
-
-  Linux-riscv64-Build-JDK21:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        env:
-          cache-name: cache-m2-repository-${{ runner.os }}-jdk21-riscv64
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-pr-${{ env.cache-name }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-pr-${{ matrix.arch }}-pr-${{ env.cache-name }}-pr-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-qemu-action@v4
-      - uses: uraimo/run-on-arch-action@v3.2.0
-        name: Run commands
-        id: runcmd
-        with:
-          arch: none
-          distro: none
-          base_image: --platform=linux/riscv64 ghcr.io/hyperxpro/brotli4j:riscv64-ubuntu2204-jdk21
-
-          dockerRunArgs: |
-            --volume "/home/runner/.m2/repository/:/root/.m2/repository"
-
-          run: |
-            chmod +x ./mvnw
-            ./mvnw -B --show-version -ntp clean package
-
-  Windows-x86_64-Build-JDK8:
+  Native-windows-x86_64:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -642,71 +245,15 @@ jobs:
           # VS 2026 is the image default; pin MSVC 14.44 (VS 2022) to keep the toolset used for 1.23.0.
           toolset: 14.44
       - name: Build with Maven
-        run: mvn -B --show-version -ntp clean package --file pom.xml
+        run: mvn -B --show-version -ntp -pl natives/windows-x86_64 -am -DskipTests package
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86_64-Build-JDK8
-          path: D:\a\Brotli4j\
-
-
-  Windows-x86_64-Build-JDK11:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK 11
-        uses: actions/setup-java@v6
-        with:
-          distribution: 'corretto'
-          java-version: 11
-          architecture: x64
-      - name: Enable Developer Command Prompt
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-        with:
-          # VS 2026 is the image default; pin MSVC 14.44 (VS 2022) to keep the toolset used for 1.23.0.
-          toolset: 14.44
-      - name: Build with Maven
-        run: mvn -B --show-version -ntp --file pom.xml clean package
-
-  Windows-x86_64-Build-JDK17:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK 17
-        uses: actions/setup-java@v6
-        with:
-          distribution: 'corretto'
-          java-version: 17
-          architecture: x64
-      - name: Enable Developer Command Prompt
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-        with:
-          # VS 2026 is the image default; pin MSVC 14.44 (VS 2022) to keep the toolset used for 1.23.0.
-          toolset: 14.44
-      - name: Build with Maven
-        run: mvn -B --show-version -ntp --file pom.xml clean package
-
-  Windows-x86_64-Build-JDK21:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          distribution: 'corretto'
-          java-version: 21
-          architecture: x64
-      - name: Enable Developer Command Prompt
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-        with:
-          # VS 2026 is the image default; pin MSVC 14.44 (VS 2022) to keep the toolset used for 1.23.0.
-          toolset: 14.44
-      - name: Build with Maven
-        run: mvn -B --show-version -ntp --file pom.xml clean package
+          name: native-windows-x86_64
+          path: natives/windows-x86_64/target
 
   # Corretto has no Windows ARM64 builds; native Zulu builds start at JDK 17.
-  # JDK 8/11 remain covered by the Windows x64 Corretto jobs.
-  Windows-ARM-Build-JDK17:
+  Native-windows-aarch64:
     runs-on: windows-11-arm
     defaults:
       run:
@@ -725,53 +272,471 @@ jobs:
           distribution: 'zulu'
           java-version: 17
           architecture: aarch64
-      - name: Build and test with Maven for ARM64
-        run: mvn -B --show-version -ntp --file pom.xml clean package -Pwindows-aarch64
+      - name: Build with Maven for ARM64
+        run: mvn -B --show-version -ntp -pl natives/windows-aarch64 -am -DskipTests package -Pwindows-aarch64
       - name: Verify DLL Architecture
         run: |
           dumpbin /headers "natives\windows-aarch64\target\classes\lib\windows-aarch64\brotli.dll" | findstr /C:"machine (ARM64)" || exit /b 1
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-ARM-Build-JDK17
-          path: C:\a\Brotli4j\
+          name: native-windows-aarch64
+          path: natives/windows-aarch64/target
 
-  Windows-ARM-Build-JDK21:
-    runs-on: windows-11-arm
-    defaults:
-      run:
-        shell: cmd
+  Test-linux-x86_64:
+    name: Test-linux-x86_64-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-linux-x86_64]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [8, 11, 17, 21, 25]
     steps:
       - uses: actions/checkout@v7
-      - name: Enable ARM64 Developer Command Prompt
-        uses: ilammy/msvc-dev-cmd@v1.13.0
+      - uses: actions/download-artifact@v8
         with:
-          arch: arm64
-          # VS 2026 is the image default; pin MSVC 14.44 (VS 2022) to keep the toolset used for 1.23.0.
-          toolset: 14.44
-      - name: Set up JDK 21
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-linux-x86_64
+          path: ci-artifacts/native
+      - name: Log in to GHCR
+        if: matrix.jdk != 25
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Test in prebuilt CentOS 6 container
+        if: matrix.jdk != 25
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2:/root/.m2" \
+            -w /code \
+            ghcr.io/hyperxpro/brotli4j:x86_64-centos6-jdk${{ matrix.jdk }} \
+            bash .github/scripts/run-test-harness.sh ci-artifacts mvn
+      - name: Set up JDK 25
+        if: matrix.jdk == 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'corretto'
+          java-version: 25
+          cache: maven
+      - name: Test on JDK 25
+        if: matrix.jdk == 25
+        run: bash .github/scripts/run-test-harness.sh ci-artifacts ./mvnw
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-linux-x86_64-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
+
+  Test-linux-aarch64:
+    name: Test-linux-aarch64-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-linux-aarch64]
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { jdk: 8, image: aarch64-ubuntu1804-jdk8 }
+          - { jdk: 11, image: aarch64-ubuntu1804-jdk11 }
+          - { jdk: 17, image: aarch64-ubuntu1804-jdk17 }
+          - { jdk: 21, image: aarch64-ubuntu2004-jdk21 }
+          - { jdk: 25 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-linux-aarch64
+          path: ci-artifacts/native
+      - name: Log in to GHCR
+        if: matrix.image
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Test in prebuilt ARM container
+        if: matrix.image
+        run: |
+          docker run --rm --platform linux/arm64/v8 \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            ghcr.io/hyperxpro/brotli4j:${{ matrix.image }} \
+            bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+      - name: Set up JDK 25
+        if: matrix.jdk == 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'corretto'
+          java-version: 25
+          cache: maven
+      - name: Test on JDK 25
+        if: matrix.jdk == 25
+        run: bash .github/scripts/run-test-harness.sh ci-artifacts ./mvnw
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-linux-aarch64-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
+
+  Test-linux-armv7:
+    name: Test-linux-armv7-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-linux-armv7]
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 32-bit personality, as in the JDK 8 build job this replaces.
+          - { jdk: 8, image: armv7-ubuntu1804-jdk8, prefix: setarch linux32 }
+          - { jdk: 11, image: armv7-ubuntu1804-jdk11 }
+          - { jdk: 17, image: armv7-ubuntu1804-jdk17 }
+          - { jdk: 25 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-linux-armv7
+          path: ci-artifacts/native
+      - name: Log in to GHCR
+        if: matrix.image
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Test in prebuilt ARM container
+        if: matrix.image
+        run: |
+          docker run --rm --platform linux/arm/v7 \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            ghcr.io/hyperxpro/brotli4j:${{ matrix.image }} \
+            ${{ matrix.prefix }} bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+      # No arm32 JDK 25 from the usual vendors; Debian's is a Zero VM with the fallback FFM linker.
+      - name: Test on Debian trixie JDK 25
+        if: matrix.jdk == 25
+        run: |
+          docker run --rm --platform linux/arm/v7 \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            debian:trixie \
+            bash -ec '
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends openjdk-25-jdk-headless maven > /dev/null
+              bash .github/scripts/run-test-harness.sh ci-artifacts mvn
+            '
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-linux-armv7-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
+
+  Test-linux-s390x:
+    name: Test-linux-s390x-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-linux-s390x]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [8, 11]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-linux-s390x
+          path: ci-artifacts/native
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-qemu-action@v4
+      - name: Test in prebuilt s390x container
+        run: |
+          docker run --rm --platform linux/s390x \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            ghcr.io/hyperxpro/brotli4j:s390x-ubuntu2004-jdk${{ matrix.jdk }} \
+            bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-linux-s390x-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
+
+  Test-linux-ppc64le:
+    name: Test-linux-ppc64le-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-linux-ppc64le]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [8, 11]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-linux-ppc64le
+          path: ci-artifacts/native
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-qemu-action@v4
+      - name: Test in prebuilt ppc64le container
+        run: |
+          docker run --rm --platform linux/ppc64le \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            ghcr.io/hyperxpro/brotli4j:ppc64le-ubuntu2004-jdk${{ matrix.jdk }} \
+            bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-linux-ppc64le-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
+
+  Test-linux-riscv64:
+    name: Test-linux-riscv64-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-linux-riscv64]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { jdk: 11, image: riscv64-ubuntu2004-jdk11, maven-opts: -Djdk.lang.Process.launchMechanism=vfork }
+          - { jdk: 17, image: riscv64-ubuntu2004-jdk17, maven-opts: -Djdk.lang.Process.launchMechanism=vfork }
+          - { jdk: 21, image: riscv64-ubuntu2204-jdk21 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-linux-riscv64
+          path: ci-artifacts/native
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-qemu-action@v4
+      - name: Test in prebuilt riscv64 container
+        run: |
+          docker run --rm --platform linux/riscv64 \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            -e MAVEN_OPTS="${{ matrix.maven-opts }}" \
+            ghcr.io/hyperxpro/brotli4j:${{ matrix.image }} \
+            bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+      - name: Fix file permissions
+        if: failure()
+        run: sudo chmod -R a+r .github/test-harness/target || true
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-linux-riscv64-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
+
+  Test-osx-aarch64:
+    name: Test-osx-aarch64-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-osx]
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [8, 11, 17, 21, 25]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-osx-aarch64
+          path: ci-artifacts/native
+      - name: Set up JDK ${{ matrix.jdk }}
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'corretto'
+          java-version: ${{ matrix.jdk }}
+          cache: maven
+      - name: Test with Maven
+        run: bash .github/scripts/run-test-harness.sh ci-artifacts mvn
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-osx-aarch64-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
+
+  # The only job that loads the x86_64 dylib.
+  Test-osx-x86_64:
+    name: Test-osx-x86_64-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-osx]
+    runs-on: macos-15-intel
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [25]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-osx-x86_64
+          path: ci-artifacts/native
+      - name: Set up JDK ${{ matrix.jdk }}
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'corretto'
+          java-version: ${{ matrix.jdk }}
+          cache: maven
+      - name: Test with Maven
+        run: bash .github/scripts/run-test-harness.sh ci-artifacts mvn
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-osx-x86_64-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
+
+  Test-windows-x86_64:
+    name: Test-windows-x86_64-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-windows-x86_64]
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [8, 11, 17, 21, 25]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-windows-x86_64
+          path: ci-artifacts/native
+      - name: Set up JDK ${{ matrix.jdk }}
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'corretto'
+          java-version: ${{ matrix.jdk }}
+          architecture: x64
+          cache: maven
+      - name: Test with Maven
+        shell: bash
+        run: bash .github/scripts/run-test-harness.sh ci-artifacts mvn
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-windows-x86_64-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
+
+  # Corretto has no Windows ARM64 builds; native Zulu builds start at JDK 17.
+  # JDK 8/11 remain covered by the Windows x64 jobs.
+  Test-windows-aarch64:
+    name: Test-windows-aarch64-JDK${{ matrix.jdk }}
+    needs: [Build-Java, Native-windows-aarch64]
+    runs-on: windows-11-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [17, 21, 25]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: java
+          path: ci-artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-windows-aarch64
+          path: ci-artifacts/native
+      - name: Set up JDK ${{ matrix.jdk }}
         uses: actions/setup-java@v6
         with:
           distribution: 'zulu'
-          java-version: 21
+          java-version: ${{ matrix.jdk }}
           architecture: aarch64
-      - name: Build and test with Maven for ARM64
-        run: mvn -B --show-version -ntp --file pom.xml clean package -Pwindows-aarch64
-      - name: Verify DLL Architecture
-        run: |
-          dumpbin /headers "natives\windows-aarch64\target\classes\lib\windows-aarch64\brotli.dll" | findstr /C:"machine (ARM64)" || exit /b 1
+          cache: maven
+      - name: Test with Maven
+        shell: bash
+        run: bash .github/scripts/run-test-harness.sh ci-artifacts mvn
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-windows-aarch64-jdk${{ matrix.jdk }}
+          path: .github/test-harness/target/failsafe-reports*
+          if-no-files-found: ignore
 
   Validate-Native-Binaries:
     needs:
-      - Linux-Aarch64-Build-JDK8
-      - Linux-ArmV7-Build-JDK8
-      - Linux-ppc64le-Build-JDK8
-      - Linux-riscv64-Build-JDK11
-      - Linux-s390x-Build-JDK8
-      - Linux-x86_64-Build-JDK8
-      - MacOS-x86_64-Build-JDK8
-      - Windows-ARM-Build-JDK17
-      - Windows-x86_64-Build-JDK8
+      - Native-linux-x86_64
+      - Native-linux-aarch64
+      - Native-linux-armv7
+      - Native-linux-s390x
+      - Native-linux-ppc64le
+      - Native-linux-riscv64
+      - Native-osx
+      - Native-windows-x86_64
+      - Native-windows-aarch64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -779,9 +744,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends binutils llvm
-      - name: Download all build artifacts
+      - name: Download native artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: native-*
           path: release-bundle
       - name: Validate native binaries
         run: bash .github/scripts/validate-native-binaries.sh --bundle release-bundle
@@ -797,9 +763,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends binutils llvm
-      - name: Download all build artifacts
+      - name: Download native artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: native-*
           path: release-bundle
       - name: Merge and validate native binaries
         run: bash .github/scripts/validate-native-binaries.sh --bundle release-bundle

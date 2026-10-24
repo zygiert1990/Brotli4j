@@ -32,16 +32,16 @@ errors=0
 
 # Each entry: artifact_name:platform:library:expected_arch
 NATIVES=(
-    "Linux-x86_64-Build-JDK8:linux-x86_64:libbrotli.so:x86_64"
-    "Linux-Aarch64-Build-JDK8:linux-aarch64:libbrotli.so:arm64"
-    "Linux-ArmV7-Build-JDK8:linux-armv7:libbrotli.so:arm32"
-    "Linux-ppc64le-Build-JDK8:linux-ppc64le:libbrotli.so:ppc64le"
-    "Linux-riscv64-Build-JDK11:linux-riscv64:libbrotli.so:riscv64"
-    "Linux-s390x-Build-JDK8:linux-s390x:libbrotli.so:s390x"
-    "Windows-x86_64-Build-JDK8:windows-x86_64:brotli.dll:x86_64"
-    "Windows-ARM-Build-JDK17:windows-aarch64:brotli.dll:arm64"
-    "MacOS-x86_64-Build-JDK8:osx-x86_64:libbrotli.dylib:x86_64"
-    "MacOS-x86_64-Build-JDK8:osx-aarch64:libbrotli.dylib:arm64"
+    "native-linux-x86_64:linux-x86_64:libbrotli.so:x86_64"
+    "native-linux-aarch64:linux-aarch64:libbrotli.so:arm64"
+    "native-linux-armv7:linux-armv7:libbrotli.so:arm32"
+    "native-linux-ppc64le:linux-ppc64le:libbrotli.so:ppc64le"
+    "native-linux-riscv64:linux-riscv64:libbrotli.so:riscv64"
+    "native-linux-s390x:linux-s390x:libbrotli.so:s390x"
+    "native-windows-x86_64:windows-x86_64:brotli.dll:x86_64"
+    "native-windows-aarch64:windows-aarch64:brotli.dll:arm64"
+    "native-osx-x86_64:osx-x86_64:libbrotli.dylib:x86_64"
+    "native-osx-aarch64:osx-aarch64:libbrotli.dylib:arm64"
 )
 
 # C entry points used by the JNI wrappers and required by the direct FFM port.
@@ -302,7 +302,7 @@ check_native() {
 
     # Copy from bundle if requested
     if [ -n "$BUNDLE" ]; then
-        local src="${BUNDLE}/${artifact}/Brotli4j/natives/${platform}/target"
+        local src="${BUNDLE}/${artifact}"
         if [ ! -d "$src" ]; then
             echo "FAIL  ${platform} - artifact directory not found: ${src}"
             return 1
