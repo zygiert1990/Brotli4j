@@ -132,6 +132,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Maven (downloaded by ./mvnw) and dependencies; resolving them under QEMU is slow.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: m2-${{ github.job }}-${{ hashFiles('**/pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          restore-keys: m2-${{ github.job }}-
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -143,7 +151,7 @@ jobs:
         run: |
           docker run --rm --platform linux/s390x \
             -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -v "${HOME}/.m2:/root/.m2" \
             -w /code \
             ghcr.io/hyperxpro/brotli4j:s390x-ubuntu2004-jdk8 \
             bash ./mvnw -B --show-version -ntp -pl natives/linux-s390x -am -DskipTests package
@@ -157,6 +165,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Maven (downloaded by ./mvnw) and dependencies; resolving them under QEMU is slow.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: m2-${{ github.job }}-${{ hashFiles('**/pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          restore-keys: m2-${{ github.job }}-
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -168,7 +184,7 @@ jobs:
         run: |
           docker run --rm --platform linux/ppc64le \
             -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -v "${HOME}/.m2:/root/.m2" \
             -w /code \
             ghcr.io/hyperxpro/brotli4j:ppc64le-ubuntu2004-jdk8 \
             bash ./mvnw -B --show-version -ntp -pl natives/linux-ppc64le -am -DskipTests package
@@ -182,6 +198,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Maven (downloaded by ./mvnw) and dependencies; resolving them under QEMU is slow.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: m2-${{ github.job }}-${{ hashFiles('**/pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          restore-keys: m2-${{ github.job }}-
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -193,13 +217,13 @@ jobs:
         run: |
           docker run --rm --platform linux/riscv64 \
             -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -v "${HOME}/.m2:/root/.m2" \
             -w /code \
             -e MAVEN_OPTS="-Djdk.lang.Process.launchMechanism=vfork" \
             ghcr.io/hyperxpro/brotli4j:riscv64-ubuntu2004-jdk11 \
             bash ./mvnw -B --show-version -ntp -pl natives/linux-riscv64 -am -DskipTests package
       - name: Fix file permissions
-        run: sudo chmod -R a+r natives/linux-riscv64/target
+        run: sudo chmod -R a+rX natives/linux-riscv64/target ~/.m2
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
@@ -463,6 +487,14 @@ jobs:
         jdk: [8, 11]
     steps:
       - uses: actions/checkout@v7
+      # Maven (downloaded by ./mvnw) and dependencies; resolving them under QEMU is slow.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: m2-${{ github.job }}-${{ hashFiles('**/pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          restore-keys: m2-${{ github.job }}-
       - uses: actions/download-artifact@v8
         with:
           name: java
@@ -482,7 +514,7 @@ jobs:
         run: |
           docker run --rm --platform linux/s390x \
             -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -v "${HOME}/.m2:/root/.m2" \
             -w /code \
             ghcr.io/hyperxpro/brotli4j:s390x-ubuntu2004-jdk${{ matrix.jdk }} \
             bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
@@ -504,6 +536,14 @@ jobs:
         jdk: [8, 11]
     steps:
       - uses: actions/checkout@v7
+      # Maven (downloaded by ./mvnw) and dependencies; resolving them under QEMU is slow.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: m2-${{ github.job }}-${{ hashFiles('**/pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          restore-keys: m2-${{ github.job }}-
       - uses: actions/download-artifact@v8
         with:
           name: java
@@ -523,7 +563,7 @@ jobs:
         run: |
           docker run --rm --platform linux/ppc64le \
             -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -v "${HOME}/.m2:/root/.m2" \
             -w /code \
             ghcr.io/hyperxpro/brotli4j:ppc64le-ubuntu2004-jdk${{ matrix.jdk }} \
             bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
@@ -548,6 +588,14 @@ jobs:
           - { jdk: 21, image: riscv64-ubuntu2204-jdk21 }
     steps:
       - uses: actions/checkout@v7
+      # Maven (downloaded by ./mvnw) and dependencies; resolving them under QEMU is slow.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: m2-${{ github.job }}-${{ hashFiles('**/pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          restore-keys: m2-${{ github.job }}-
       - uses: actions/download-artifact@v8
         with:
           name: java
@@ -567,14 +615,14 @@ jobs:
         run: |
           docker run --rm --platform linux/riscv64 \
             -v "${{ github.workspace }}:/code" \
-            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -v "${HOME}/.m2:/root/.m2" \
             -w /code \
             -e MAVEN_OPTS="${{ matrix.maven-opts }}" \
             ghcr.io/hyperxpro/brotli4j:${{ matrix.image }} \
             bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
       - name: Fix file permissions
-        if: failure()
-        run: sudo chmod -R a+r .github/test-harness/target || true
+        if: always()
+        run: sudo chmod -R a+rX .github/test-harness/target ~/.m2 || true
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
