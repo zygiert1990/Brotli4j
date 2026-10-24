@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runs the compiled brotli4j tests against packaged artifacts, without building anything.
+  Not part of the reactor: never built or published by the normal build.
+
+  mvn -f .github/test-harness/pom.xml verify \
+      -Dbrotli4j.jar=... -Dservice.jar=... -Dnative.jar=... -Dtest.classes=...
+
+  On JDK 22+ the suite runs twice: as packaged (FFM from META-INF/versions/22) and with
+  multi-release disabled (JNI).
+
+  JUnit and netty-buffer come from the root pom. On JDK 17+ add -P '!jdk17+' so JUnit stays
+  at the root default (5.14.4), the version the tests were compiled against.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Must match the root pom version, otherwise Maven silently resolves that version from Central. -->
+    <parent>
+        <groupId>com.aayushatharva.brotli4j</groupId>
+        <artifactId>brotli4j-parent</artifactId>
+        <version>1.23.0</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>test-harness</artifactId>
+    <packaging>pom</packaging>
+
+    <properties>
+        <!-- Inherited sign-artifacts execution is bound to verify. -->
+        <gpg.skip>true</gpg.skip>
+        <harness.argLine>-Xmx2G -Xcheck:jni</harness.argLine>
+    </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <classesDirectory>${brotli4j.jar}</classesDirectory>
+                    <testClassesDirectory>${test.classes}</testClassesDirectory>
+                    <additionalClasspathElements>
+                        <additionalClasspathElement>${service.jar}</additionalClasspathElement>
+                        <additionalClasspathElement>${native.jar}</additionalClasspathElement>
+                    </additionalClasspathElements>
+                    <useModulePath>false</useModulePath>
+                    <includes>
+                        <include>**/*Test.java</include>
+                    </includes>
+                    <failIfNoTests>true</failIfNoTests>
+                    <argLine>${harness.argLine}</argLine>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>tests</id>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- JDK 22+: native access for the default execution (FFM) and an extra "jni" execution. -->
+        <profile>
+            <id>jdk22+</id>
+            <activation>
+                <jdk>[22,)</jdk>
+            </activation>
+            <properties>
+                <harness.argLine>-Xmx2G -Xcheck:jni --enable-native-access=ALL-UNNAMED</harness.argLine>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>jni</id>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                                <configuration>
+                                    <argLine>${harness.argLine} -Djdk.util.jar.enableMultiRelease=false</argLine>
+                                    <reportsDirectory>${project.build.directory}/failsafe-reports-jni</reportsDirectory>
+                                    <summaryFile>${project.build.directory}/failsafe-reports-jni/failsafe-summary.xml</summaryFile>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>
