@@ -22,7 +22,7 @@
     <parent>
         <artifactId>natives</artifactId>
         <groupId>com.aayushatharva.brotli4j</groupId>
-        <version>1.23.0</version>
+        <version>1.24.0</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -84,7 +84,7 @@
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
-                        <version>3.6.3</version>
+                        <version>3.6.4</version>
                         <executions>
                             <execution>
                                 <id>Execute-Native-Compile</id>
