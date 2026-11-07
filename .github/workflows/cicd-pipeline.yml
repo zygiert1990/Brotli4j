@@ -400,6 +400,7 @@ jobs:
           - { jdk: 8, image: armv7-ubuntu1804-jdk8, prefix: setarch linux32 }
           - { jdk: 11, image: armv7-ubuntu1804-jdk11 }
           - { jdk: 17, image: armv7-ubuntu1804-jdk17 }
+          # No armv7 JDK 21 image in docker-ci/armv7; testing JDK 21 needs one.
           # No GHCR JDK 25 image yet, so !matrix.image steps use debian:trixie; remove them once one exists.
           - { jdk: 25 }
     steps:
