@@ -461,6 +461,8 @@ jobs:
         include:
           - { jdk: 8, image: s390x-ubuntu2004-jdk8 }
           - { jdk: 11, image: s390x-ubuntu2004-jdk11 }
+          # No GHCR JDK 25 image yet, so !matrix.image steps use eclipse-temurin; remove them once one exists.
+          - { jdk: 25 }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -472,6 +474,7 @@ jobs:
           name: native-linux-s390x
           path: ci-artifacts/native
       - name: Log in to GHCR
+        if: matrix.image
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -479,6 +482,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-qemu-action@v4
       - name: Test in prebuilt s390x container
+        if: matrix.image
         run: |
           docker run --rm --platform linux/s390x \
             -v "${{ github.workspace }}:/code" \
@@ -486,6 +490,19 @@ jobs:
             -w /code \
             ghcr.io/hyperxpro/brotli4j:${{ matrix.image }} \
             bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+      # HotSpot with JIT; under QEMU a Zero (interpreter-only) JVM would be far too slow, hence the Server VM check.
+      - name: Test on Temurin JDK 25
+        if: ${{ !matrix.image }}
+        run: |
+          docker run --rm --platform linux/s390x \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            eclipse-temurin:25-jdk \
+            bash -ec '
+              java -version 2>&1 | grep "Server VM"
+              bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+            '
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
@@ -504,6 +521,8 @@ jobs:
         include:
           - { jdk: 8, image: ppc64le-ubuntu2004-jdk8 }
           - { jdk: 11, image: ppc64le-ubuntu2004-jdk11 }
+          # No GHCR JDK 25 image yet, so !matrix.image steps use eclipse-temurin; remove them once one exists.
+          - { jdk: 25 }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -515,6 +534,7 @@ jobs:
           name: native-linux-ppc64le
           path: ci-artifacts/native
       - name: Log in to GHCR
+        if: matrix.image
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -522,6 +542,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-qemu-action@v4
       - name: Test in prebuilt ppc64le container
+        if: matrix.image
         run: |
           docker run --rm --platform linux/ppc64le \
             -v "${{ github.workspace }}:/code" \
@@ -529,6 +550,19 @@ jobs:
             -w /code \
             ghcr.io/hyperxpro/brotli4j:${{ matrix.image }} \
             bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+      # HotSpot with JIT; under QEMU a Zero (interpreter-only) JVM would be far too slow, hence the Server VM check.
+      - name: Test on Temurin JDK 25
+        if: ${{ !matrix.image }}
+        run: |
+          docker run --rm --platform linux/ppc64le \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            eclipse-temurin:25-jdk \
+            bash -ec '
+              java -version 2>&1 | grep "Server VM"
+              bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+            '
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
@@ -548,6 +582,8 @@ jobs:
           - { jdk: 11, image: riscv64-ubuntu2004-jdk11 }
           - { jdk: 17, image: riscv64-ubuntu2004-jdk17 }
           - { jdk: 21, image: riscv64-ubuntu2204-jdk21 }
+          # No GHCR JDK 25 image yet, so !matrix.image steps use debian:trixie; remove them once one exists.
+          - { jdk: 25 }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -559,6 +595,7 @@ jobs:
           name: native-linux-riscv64
           path: ci-artifacts/native
       - name: Log in to GHCR
+        if: matrix.image
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -566,6 +603,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-qemu-action@v4
       - name: Test in prebuilt riscv64 container
+        if: matrix.image
         run: |
           docker run --rm --platform linux/riscv64 \
             -v "${{ github.workspace }}:/code" \
@@ -573,6 +611,21 @@ jobs:
             -w /code \
             ghcr.io/hyperxpro/brotli4j:${{ matrix.image }} \
             bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+      # No vendor JDK 25 image for riscv64; Debian's is HotSpot with JIT (needed under QEMU), hence the Server VM check.
+      - name: Test on Debian trixie JDK 25
+        if: ${{ !matrix.image }}
+        run: |
+          docker run --rm --platform linux/riscv64 \
+            -v "${{ github.workspace }}:/code" \
+            -v "${HOME}/.m2/repository:/root/.m2/repository" \
+            -w /code \
+            debian:trixie \
+            bash -ec '
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends openjdk-25-jdk-headless > /dev/null
+              java -version 2>&1 | grep "Server VM"
+              bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
+            '
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
