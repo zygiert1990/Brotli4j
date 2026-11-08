@@ -551,10 +551,12 @@ jobs:
             ghcr.io/hyperxpro/brotli4j:${{ matrix.image }} \
             bash .github/scripts/run-test-harness.sh ci-artifacts bash ./mvnw
       # HotSpot with JIT; under QEMU a Zero (interpreter-only) JVM would be far too slow, hence the Server VM check.
+      # MAVEN_OPTS: the GHASH intrinsic is miscomputed under QEMU ppc64le, so Maven's TLS downloads fail (bad_record_mac).
       - name: Test on Temurin JDK 25
         if: ${{ !matrix.image }}
         run: |
           docker run --rm --platform linux/ppc64le \
+            -e MAVEN_OPTS="-XX:+UnlockDiagnosticVMOptions -XX:-UseGHASHIntrinsics" \
             -v "${{ github.workspace }}:/code" \
             -v "${HOME}/.m2/repository:/root/.m2/repository" \
             -w /code \
