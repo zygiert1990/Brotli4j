@@ -34,8 +34,8 @@ class BrotliCommonTest {
 
     @Test
     void nativeSetDictionaryData() {
-        assertTrue(CommonJNI.nativeSetDictionaryData(ByteBuffer.allocateDirect(BrotliCommon.RFC_DICTIONARY_SIZE)));
+        assertTrue(CommonJNI.setDictionaryData(ByteBuffer.allocateDirect(BrotliCommon.RFC_DICTIONARY_SIZE)));
         // A heap buffer has no native address.
-        assertFalse(CommonJNI.nativeSetDictionaryData(ByteBuffer.allocate(BrotliCommon.RFC_DICTIONARY_SIZE)));
+        assertFalse(CommonJNI.setDictionaryData(ByteBuffer.allocate(BrotliCommon.RFC_DICTIONARY_SIZE)));
     }
 }
