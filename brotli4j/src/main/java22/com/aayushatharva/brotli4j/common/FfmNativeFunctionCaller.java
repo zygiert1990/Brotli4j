@@ -11,7 +11,6 @@ import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
-import java.lang.ref.Reference;
 import java.nio.ByteBuffer;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
@@ -43,20 +42,19 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         if (buffer == null || !buffer.isDirect()) {
             return false;
         }
-        long data = MemorySegment.ofBuffer(buffer.duplicate().clear()).address();
-        if (data == 0) {
+        // Passed to the downcall as a segment: FFM keeps it, and so the buffer, alive during the call.
+        MemorySegment data = MemorySegment.ofBuffer(buffer.duplicate().clear());
+        if (data.address() == 0) {
             return false;
         }
         try {
-            Bindings.SET_DICTIONARY_DATA.invokeExact(MemorySegment.ofAddress(data));
+            Bindings.SET_DICTIONARY_DATA.invokeExact(data);
             MemorySegment dictionary = (MemorySegment) Bindings.GET_DICTIONARY.invokeExact();
-            if (dictionary.get(ADDRESS, Bindings.DICTIONARY_DATA_OFFSET).address() == data) {
+            if (dictionary.get(ADDRESS, Bindings.DICTIONARY_DATA_OFFSET).address() == data.address()) {
                 dictionaryData = buffer;
             }
         } catch (Throwable t) {
             throw new AssertionError(t);
-        } finally {
-            Reference.reachabilityFence(buffer);
         }
         return true;
     }
