@@ -19,20 +19,45 @@ package com.aayushatharva.brotli4j.internal;
 import com.aayushatharva.brotli4j.common.annotations.Internal;
 
 import java.lang.foreign.Linker;
+import java.lang.foreign.SymbolLookup;
 import java.util.function.Supplier;
 
 /**
  * Picks how native code is called (JDK 22+), from {@code brotli4j.backend}: {@code ffm}, {@code jni},
- * or unset for FFM with a fallback to JNI when this JVM has no FFM linker.
+ * or unset for FFM with a fallback to JNI when this JVM has no FFM linker. Also holds what the FFM
+ * implementations of all packages share.
  * <p>
  * Must keep the same public API as the base version, as a multi-release JAR requires.
  */
 @Internal
 public final class NativeBackend {
 
+    /**
+     * Largest size {@link java.lang.foreign.MemorySegment#asByteBuffer()} accepts (the JDK's
+     * {@code SOFT_MAX_ARRAY_LENGTH}); {@code NewDirectByteBuffer} accepts up to {@link Integer#MAX_VALUE}.
+     */
+    public static final long MAX_BUFFER_SIZE = Integer.MAX_VALUE - 8;
+
     private static final String BACKEND = "brotli4j.backend";
 
     private NativeBackend() {
+    }
+
+    /**
+     * Fails like an unlinked JNI native while the library isn't loaded yet, so the call can be retried after
+     * loading. Must run before a class looks the symbols up in a static initializer: that failure is permanent.
+     *
+     * @param unlinkedMethod the JNI native, as HotSpot names it in {@link UnsatisfiedLinkError}
+     * @param symbols        the C functions the caller downcalls
+     * @throws UnsatisfiedLinkError if a symbol isn't in the libraries loaded by this class loader
+     */
+    public static void ensureLinked(String unlinkedMethod, String... symbols) {
+        SymbolLookup lookup = SymbolLookup.loaderLookup();
+        for (String symbol : symbols) {
+            if (lookup.find(symbol).isEmpty()) {
+                throw new UnsatisfiedLinkError(unlinkedMethod);
+            }
+        }
     }
 
     /**

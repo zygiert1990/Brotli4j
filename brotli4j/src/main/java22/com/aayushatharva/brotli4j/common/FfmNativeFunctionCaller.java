@@ -5,6 +5,8 @@
 */
 package com.aayushatharva.brotli4j.common;
 
+import com.aayushatharva.brotli4j.internal.NativeBackend;
+
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
 import java.lang.foreign.MemoryLayout;
@@ -25,6 +27,7 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
     private static final String SET_DICTIONARY_DATA = "BrotliSetDictionaryData";
     private static final String GET_DICTIONARY = "BrotliGetDictionary";
 
+    private static final String[] SYMBOLS = {SET_DICTIONARY_DATA, GET_DICTIONARY};
     // Benign race: at worst two threads both look the symbols up.
     private static boolean linked;
 
@@ -37,7 +40,12 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
 
     @Override
     public boolean nativeSetDictionaryData(ByteBuffer buffer) {
-        ensureLinked();
+        if (!linked) {
+            NativeBackend.ensureLinked(
+                    "'boolean com.aayushatharva.brotli4j.common.CommonJNI.nativeSetDictionaryData(java.nio.ByteBuffer)'",
+                    SYMBOLS);
+            linked = true;
+        }
         // NewGlobalRef(null) and GetDirectBufferAddress(heap buffer) both yield NULL.
         if (buffer == null || !buffer.isDirect()) {
             return false;
@@ -60,22 +68,7 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
     }
 
     /**
-     * Fails like an unlinked JNI native (retried on the next call) while the library isn't loaded yet.
-     */
-    private static void ensureLinked() {
-        if (linked) {
-            return;
-        }
-        SymbolLookup lookup = SymbolLookup.loaderLookup();
-        if (lookup.find(SET_DICTIONARY_DATA).isEmpty() || lookup.find(GET_DICTIONARY).isEmpty()) {
-            throw new UnsatisfiedLinkError(
-                    "'boolean com.aayushatharva.brotli4j.common.CommonJNI.nativeSetDictionaryData(java.nio.ByteBuffer)'");
-        }
-        linked = true;
-    }
-
-    /**
-     * Downcall handles and layouts, initialized on first use after {@link #ensureLinked()} succeeded.
+     * Downcall handles and layouts, initialized on first use after {@link NativeBackend#ensureLinked} succeeded.
      */
     private static final class Bindings {
         private static final Linker LINKER = Linker.nativeLinker();

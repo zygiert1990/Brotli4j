@@ -27,7 +27,22 @@ import java.util.function.Supplier;
 @Internal
 public final class NativeBackend {
 
+    /**
+     * Only used by the JDK 22+ version.
+     */
+    public static final long MAX_BUFFER_SIZE = Integer.MAX_VALUE - 8;
+
     private NativeBackend() {
+    }
+
+    /**
+     * @param unlinkedMethod the JNI native, as HotSpot names it in {@link UnsatisfiedLinkError}
+     * @param symbols        the C functions the caller downcalls
+     * @throws UnsupportedOperationException always: before JDK 22 native calls go straight to JNI
+     */
+    public static void ensureLinked(String unlinkedMethod, String... symbols) {
+        throw new UnsupportedOperationException(
+                "NativeBackend is only used on JDK 22+ to route native calls to JNI or FFM");
     }
 
     /**

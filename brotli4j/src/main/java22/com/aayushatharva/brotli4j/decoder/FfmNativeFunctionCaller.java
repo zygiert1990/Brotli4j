@@ -5,6 +5,8 @@
 */
 package com.aayushatharva.brotli4j.decoder;
 
+import com.aayushatharva.brotli4j.internal.NativeBackend;
+
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -44,6 +46,8 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
 
     private static final int MAX_DICTIONARIES = 15;
 
+    private static final String[] SYMBOLS = {CREATE_INSTANCE, DESTROY_INSTANCE, DECOMPRESS_STREAM, HAS_MORE_OUTPUT,
+            TAKE_OUTPUT, IS_FINISHED, ATTACH_DICTIONARY};
     // Benign race: at worst two threads both look the symbols up.
     private static boolean linked;
 
@@ -64,7 +68,12 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
 
     @Override
     public ByteBuffer nativeCreate(long[] context) {
-        ensureLinked();
+        // Only here: the other methods run on a created decoder.
+        if (!linked) {
+            NativeBackend.ensureLinked(
+                    "'java.nio.ByteBuffer com.aayushatharva.brotli4j.decoder.DecoderJNI.nativeCreate(long[])'", SYMBOLS);
+            linked = true;
+        }
         boolean ok = true;
         long inputSize = Bindings.toSizeT(context[1]);
         context[0] = 0;
@@ -77,14 +86,14 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         outSize = cells.asSlice(Bindings.OUT_SIZE_OFFSET, Bindings.SIZE_T.byteSize());
         dataLength = cells.asSlice(Bindings.DATA_LENGTH_OFFSET, Bindings.SIZE_T.byteSize());
 
-        if (inputSize == 0) {
+        // Java only: NewDirectByteBuffer accepts sizes above MAX_BUFFER_SIZE, asByteBuffer() below doesn't.
+        if (inputSize == 0 || Long.compareUnsigned(inputSize, NativeBackend.MAX_BUFFER_SIZE) > 0) {
             ok = false;
         } else {
-            // new (std::nothrow) yields NULL where allocate throws: IllegalArgumentException for a negative
-            // (as size_t: huge) size, OutOfMemoryError when malloc fails or the size can't be addressed.
+            // new (std::nothrow) yields NULL where allocate throws: OutOfMemoryError when malloc fails.
             try {
                 inputStart = arena.allocate(inputSize);
-            } catch (IllegalArgumentException | OutOfMemoryError e) {
+            } catch (OutOfMemoryError e) {
                 ok = false;
             }
         }
@@ -113,22 +122,22 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
     }
 
     @Override
-    public void nativePush(long[] context, int inputLength) {
+    public void nativePush(long[] context, int length) {
         context[1] = 0;  /* ERROR */
         context[2] = 0;
 
-        if (inputLength != 0) {
+        if (length != 0) {
             /* Still have unconsumed data. Workflow is broken. */
-            if (this.inputOffset < this.inputLength) {
+            if (inputOffset < inputLength) {
                 return;
             }
-            this.inputOffset = 0;
-            this.inputLength = Bindings.toSizeT(inputLength);
+            inputOffset = 0;
+            inputLength = Bindings.toSizeT(length);
         }
 
         /* Actual decompression. */
-        in.set(ADDRESS, 0, inputStart.asSlice(this.inputOffset));
-        Bindings.setSize(inSize, this.inputLength - this.inputOffset);
+        in.set(ADDRESS, 0, inputStart.asSlice(inputOffset));
+        Bindings.setSize(inSize, inputLength - inputOffset);
         Bindings.setSize(outSize, 0);
         int status;
         try {
@@ -137,11 +146,11 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         } catch (Throwable t) {
             throw new AssertionError(t);
         }
-        this.inputOffset = this.inputLength - Bindings.getSize(inSize);
+        inputOffset = inputLength - Bindings.getSize(inSize);
         switch (status) {
             case RESULT_SUCCESS:
                 /* Bytes after stream end are not allowed. */
-                context[1] = (this.inputOffset == this.inputLength) ? 1 : 0;
+                context[1] = (inputOffset == inputLength) ? 1 : 0;
                 break;
 
             case RESULT_NEEDS_MORE_INPUT:
@@ -264,26 +273,7 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
     }
 
     /**
-     * Fails like an unlinked JNI native (retried on the next call) while the library isn't loaded yet.
-     * Only {@link #nativeCreate} needs it: the other methods run on a created decoder.
-     */
-    private static void ensureLinked() {
-        if (linked) {
-            return;
-        }
-        SymbolLookup lookup = SymbolLookup.loaderLookup();
-        for (String symbol : new String[]{CREATE_INSTANCE, DESTROY_INSTANCE, DECOMPRESS_STREAM, HAS_MORE_OUTPUT,
-                TAKE_OUTPUT, IS_FINISHED, ATTACH_DICTIONARY}) {
-            if (lookup.find(symbol).isEmpty()) {
-                throw new UnsatisfiedLinkError(
-                        "'java.nio.ByteBuffer com.aayushatharva.brotli4j.decoder.DecoderJNI.nativeCreate(long[])'");
-            }
-        }
-        linked = true;
-    }
-
-    /**
-     * Downcall handles and layouts, initialized on first use after {@link #ensureLinked()} succeeded.
+     * Downcall handles and layouts, initialized on first use after {@link NativeBackend#ensureLinked} succeeded.
      */
     private static final class Bindings {
         private static final Linker LINKER = Linker.nativeLinker();
