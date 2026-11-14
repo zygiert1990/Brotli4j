@@ -18,6 +18,8 @@ package com.aayushatharva.brotli4j.encoder;
 
 import com.aayushatharva.brotli4j.Brotli4jLoader;
 import com.aayushatharva.brotli4j.common.BrotliCommon;
+import com.aayushatharva.brotli4j.decoder.Decoder;
+import com.aayushatharva.brotli4j.decoder.DecoderJNI;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
@@ -34,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EncoderTest {
 
@@ -144,6 +147,31 @@ class EncoderTest {
         prepared.close();
         // The second close passes null to native code, which ignores it.
         assertDoesNotThrow(prepared::close);
+    }
+
+    @Test
+    void flushMakesInputDecodable() throws IOException {
+        byte[] meow = "Meow".getBytes();
+        ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+        try (BrotliOutputStream out = new BrotliOutputStream(compressed)) {
+            out.write(meow);
+            out.flush();
+            // Without FLUSH (e.g. mapped to PROCESS) brotli keeps the input, so it can't be decoded yet.
+            // Decoder wrapper: BrotliInputStream reads ahead after the requested bytes and fails on an unfinished stream.
+            byte[] flushed = compressed.toByteArray();
+            DecoderJNI.Wrapper decoder = new DecoderJNI.Wrapper(flushed.length);
+            try {
+                decoder.getInputBuffer().put(flushed);
+                decoder.push(flushed.length);
+                assertTrue(decoder.hasOutput());
+                assertEquals(ByteBuffer.wrap(meow), decoder.pull());
+            } finally {
+                decoder.destroy();
+            }
+            // Fails if FLUSH finished the stream (e.g. mapped to FINISH).
+            out.write(meow);
+        }
+        assertArrayEquals("MeowMeow".getBytes(), Decoder.decompress(compressed.toByteArray()).getDecompressedData());
     }
 
     @Test
