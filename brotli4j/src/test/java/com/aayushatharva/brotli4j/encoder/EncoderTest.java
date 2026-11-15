@@ -18,6 +18,7 @@ package com.aayushatharva.brotli4j.encoder;
 
 import com.aayushatharva.brotli4j.Brotli4jLoader;
 import com.aayushatharva.brotli4j.common.BrotliCommon;
+import com.aayushatharva.brotli4j.decoder.BrotliInputStream;
 import com.aayushatharva.brotli4j.decoder.Decoder;
 import com.aayushatharva.brotli4j.decoder.DecoderJNI;
 import io.netty.buffer.ByteBuf;
@@ -26,10 +27,15 @@ import io.netty.buffer.Unpooled;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -188,6 +194,41 @@ class EncoderTest {
             encoder.destroy();
             // Native prepared dictionaries implement AutoCloseable; free only after the encoder is destroyed.
             ((AutoCloseable) prepared).close();
+        }
+    }
+
+    @Test
+    void createFailsForInvalidBufferSize() {
+        assertThrows(IOException.class, () -> new EncoderJNI.Wrapper(0, -1, -1, null));
+        assertThrows(IOException.class, () -> new EncoderJNI.Wrapper(-1, -1, -1, null));
+    }
+
+    @Test
+    void streamsSupportSequentialThreadHandoff() throws Exception {
+        byte[] input = "Meow across threads".getBytes(StandardCharsets.UTF_8);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+        try {
+            // Create on this thread, use and close on another. Future.get provides synchronization.
+            BrotliOutputStream out = new BrotliOutputStream(compressed);
+            worker.submit(() -> {
+                try (BrotliOutputStream stream = out) {
+                    stream.write(input);
+                }
+                return null;
+            }).get();
+            BrotliInputStream in = new BrotliInputStream(new ByteArrayInputStream(compressed.toByteArray()));
+            byte[] decoded = worker.submit(() -> {
+                try (DataInputStream stream = new DataInputStream(in)) {
+                    byte[] bytes = new byte[input.length];
+                    stream.readFully(bytes);
+                    assertEquals(-1, stream.read());
+                    return bytes;
+                }
+            }).get();
+            assertArrayEquals(input, decoded);
+        } finally {
+            worker.shutdownNow();
         }
     }
 }

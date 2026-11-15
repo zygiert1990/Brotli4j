@@ -7,7 +7,6 @@ package com.aayushatharva.brotli4j.decoder;
 
 import com.aayushatharva.brotli4j.internal.NativeBackend;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
 import java.lang.foreign.MemoryLayout;
@@ -51,16 +50,16 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
     // Benign race: at worst two threads both look the symbols up.
     private static boolean linked;
 
-    // DecoderHandle. Shared, not confined: a Wrapper may be handed between threads.
-    private Arena arena;
-    private MemorySegment state;
+    // DecoderHandle. Explicit native ownership permits sequential thread handoff.
+    private MemorySegment allocation = MemorySegment.NULL;
+    private MemorySegment state = MemorySegment.NULL;
     private MemorySegment inputStart;
     private long inputOffset;
     private long inputLength;
     /** JNI global references: keep attached dictionaries alive until {@link #nativeDestroy}. */
     private final List<ByteBuffer> dictionaryRefs = new ArrayList<>(MAX_DICTIONARIES);
 
-    // Out-parameters, which C keeps on its stack: slices of one arena allocation.
+    // Out-parameters, which C keeps on its stack: slices of the input/cells allocation.
     private MemorySegment inSize;
     private MemorySegment in;
     private MemorySegment outSize;
@@ -74,51 +73,46 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
                     "'java.nio.ByteBuffer com.aayushatharva.brotli4j.decoder.DecoderJNI.nativeCreate(long[])'", SYMBOLS);
             linked = true;
         }
-        boolean ok = true;
         long inputSize = Bindings.toSizeT(context[1]);
         context[0] = 0;
         context[2] = 0;
-        arena = Arena.ofShared();
-        // Java only (C uses stack variables). Allocated first: if this throws, the arena holds nothing to free.
-        MemorySegment cells = arena.allocate(Bindings.CELLS);
-        inSize = cells.asSlice(Bindings.IN_SIZE_OFFSET, Bindings.SIZE_T.byteSize());
-        in = cells.asSlice(Bindings.IN_OFFSET, ADDRESS.byteSize());
-        outSize = cells.asSlice(Bindings.OUT_SIZE_OFFSET, Bindings.SIZE_T.byteSize());
-        dataLength = cells.asSlice(Bindings.DATA_LENGTH_OFFSET, Bindings.SIZE_T.byteSize());
-
         // Java only: NewDirectByteBuffer accepts sizes above MAX_BUFFER_SIZE, asByteBuffer() below doesn't.
         if (inputSize == 0 || Long.compareUnsigned(inputSize, NativeBackend.MAX_BUFFER_SIZE) > 0) {
-            ok = false;
-        } else {
-            // new (std::nothrow) yields NULL where allocate throws: OutOfMemoryError when malloc fails.
-            try {
-                inputStart = arena.allocate(inputSize);
-            } catch (OutOfMemoryError e) {
-                ok = false;
-            }
-        }
-
-        if (ok) {
-            try {
-                state = (MemorySegment) Bindings.CREATE_INSTANCE.invokeExact(
-                        MemorySegment.NULL, MemorySegment.NULL, MemorySegment.NULL);
-            } catch (Throwable t) {
-                throw new AssertionError(t);
-            }
-            ok = state.address() != 0;
-        }
-
-        if (ok) {
-            context[0] = state.address();
-        } else {
-            arena.close();
-        }
-
-        if (!ok) {
             return null;
         }
-
-        return inputStart.asByteBuffer();
+        // Cannot overflow size_t: inputSize is at most MAX_BUFFER_SIZE.
+        long allocationSize = Bindings.CELLS.byteSize() + inputSize;
+        boolean created = false;
+        try {
+            allocation = (MemorySegment) Bindings.MALLOC.invokeExact(allocationSize);
+            if (allocation.address() == 0) {
+                return null;
+            }
+            // malloc aligns the cells; input bytes need no additional alignment or zeroing.
+            MemorySegment memory = allocation.reinterpret(allocationSize);
+            inSize = memory.asSlice(Bindings.IN_SIZE_OFFSET, Bindings.SIZE_T.byteSize());
+            in = memory.asSlice(Bindings.IN_OFFSET, ADDRESS.byteSize());
+            outSize = memory.asSlice(Bindings.OUT_SIZE_OFFSET, Bindings.SIZE_T.byteSize());
+            dataLength = memory.asSlice(Bindings.DATA_LENGTH_OFFSET, Bindings.SIZE_T.byteSize());
+            inputStart = memory.asSlice(Bindings.CELLS.byteSize(), inputSize);
+            state = (MemorySegment) Bindings.CREATE_INSTANCE.invokeExact(
+                    MemorySegment.NULL, MemorySegment.NULL, MemorySegment.NULL);
+            if (state.address() == 0) {
+                return null;
+            }
+            ByteBuffer inputBuffer = inputStart.asByteBuffer();
+            context[0] = state.address();
+            created = true;
+            return inputBuffer;
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        } finally {
+            if (!created) {
+                release();
+            }
+        }
     }
 
     @Override
@@ -191,8 +185,8 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         }
         context[2] = hasMoreOutput ? 1 : 0;
         // NewDirectByteBuffer: big-endian view of brotli's output, valid until the next call.
-        // Tied to the arena (brotli owns the memory, so no cleanup action): access after destroy throws.
-        return data.reinterpret(Bindings.getSize(dataLength), arena, null).asByteBuffer();
+        // Brotli owns the output. Like JNI, this view becomes invalid after destroy.
+        return data.reinterpret(Bindings.getSize(dataLength)).asByteBuffer();
     }
 
     @Override
@@ -207,16 +201,30 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
 
     @Override
     public void nativeDestroy(long[] context) {
-        // Closed first, unlike C: it throws while another thread's downcall uses the arena, before anything is
-        // freed. The input isn't referenced by brotli between calls; state is brotli's own (global scope).
-        arena.close();
+        release();
+    }
+
+    /** Release only memory owned by this caller, including partially constructed instances. */
+    private void release() {
         try {
-            Bindings.DESTROY_INSTANCE.invokeExact(state);
+            if (state.address() != 0) {
+                Bindings.DESTROY_INSTANCE.invokeExact(state);
+                state = MemorySegment.NULL;
+            }
         } catch (Throwable t) {
             throw new AssertionError(t);
+        } finally {
+            // Keep RAW dictionary storage reachable until DestroyInstance has completed.
+            dictionaryRefs.clear();
+            try {
+                if (allocation.address() != 0) {
+                    Bindings.FREE.invokeExact(allocation);
+                    allocation = MemorySegment.NULL;
+                }
+            } catch (Throwable t) {
+                throw new AssertionError(t);
+            }
         }
-        // After DestroyInstance: brotli reads RAW dictionaries in place.
-        dictionaryRefs.clear();
     }
 
     @Override
@@ -282,6 +290,13 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
 
         /** {@code size_t}: 8 bytes on 64-bit, 4 on 32-bit. */
         static final ValueLayout SIZE_T = sizeT();
+
+        // Allocate and free through the C runtime; Brotli owns its state and output separately.
+        private static final SymbolLookup C_RUNTIME = LINKER.defaultLookup();
+        static final MethodHandle MALLOC = sizeTAsLong(LINKER.downcallHandle(
+                C_RUNTIME.find("malloc").orElseThrow(), FunctionDescriptor.of(ADDRESS, SIZE_T)), 0);
+        static final MethodHandle FREE = LINKER.downcallHandle(
+                C_RUNTIME.find("free").orElseThrow(), FunctionDescriptor.ofVoid(ADDRESS));
 
         /** The out-parameters; {@code size_t} and pointers have the same size, so there is no padding. */
         static final MemoryLayout CELLS = MemoryLayout.structLayout(
