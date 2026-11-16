@@ -51,19 +51,16 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
     private static boolean linked;
 
     // DecoderHandle. Explicit native ownership permits sequential thread handoff.
-    private MemorySegment allocation = MemorySegment.NULL;
+    /** One malloc'ed block: the out-parameter cells (C keeps them on its stack), then the input buffer. */
+    private MemorySegment nativeMemory = MemorySegment.NULL;
     private MemorySegment state = MemorySegment.NULL;
-    private MemorySegment inputStart;
     private long inputOffset;
     private long inputLength;
-    /** JNI global references: keep attached dictionaries alive until {@link #nativeDestroy}. */
-    private final List<ByteBuffer> dictionaryRefs = new ArrayList<>(MAX_DICTIONARIES);
-
-    // Out-parameters, which C keeps on its stack: slices of the input/cells allocation.
-    private MemorySegment inSize;
-    private MemorySegment in;
-    private MemorySegment outSize;
-    private MemorySegment dataLength;
+    /**
+     * JNI global references: keep attached dictionaries alive until {@link #nativeDestroy}. Created on the first
+     * attach; most instances never attach one.
+     */
+    private List<ByteBuffer> dictionaryRefs;
 
     @Override
     public ByteBuffer nativeCreate(long[] context) {
@@ -84,23 +81,18 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         long allocationSize = Bindings.CELLS.byteSize() + inputSize;
         boolean created = false;
         try {
-            allocation = (MemorySegment) Bindings.MALLOC.invokeExact(allocationSize);
+            MemorySegment allocation = (MemorySegment) Bindings.MALLOC.invokeExact(allocationSize);
             if (allocation.address() == 0) {
                 return null;
             }
             // malloc aligns the cells; input bytes need no additional alignment or zeroing.
-            MemorySegment memory = allocation.reinterpret(allocationSize);
-            inSize = memory.asSlice(Bindings.IN_SIZE_OFFSET, Bindings.SIZE_T.byteSize());
-            in = memory.asSlice(Bindings.IN_OFFSET, ADDRESS.byteSize());
-            outSize = memory.asSlice(Bindings.OUT_SIZE_OFFSET, Bindings.SIZE_T.byteSize());
-            dataLength = memory.asSlice(Bindings.DATA_LENGTH_OFFSET, Bindings.SIZE_T.byteSize());
-            inputStart = memory.asSlice(Bindings.CELLS.byteSize(), inputSize);
+            nativeMemory = allocation.reinterpret(allocationSize);
             state = (MemorySegment) Bindings.CREATE_INSTANCE.invokeExact(
                     MemorySegment.NULL, MemorySegment.NULL, MemorySegment.NULL);
             if (state.address() == 0) {
                 return null;
             }
-            ByteBuffer inputBuffer = inputStart.asByteBuffer();
+            ByteBuffer inputBuffer = nativeMemory.asSlice(Bindings.CELLS.byteSize(), inputSize).asByteBuffer();
             context[0] = state.address();
             created = true;
             return inputBuffer;
@@ -130,17 +122,18 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         }
 
         /* Actual decompression. */
-        in.set(ADDRESS, 0, inputStart.asSlice(inputOffset));
-        Bindings.setSize(inSize, inputLength - inputOffset);
-        Bindings.setSize(outSize, 0);
+        nativeMemory.set(ADDRESS, Bindings.IN_OFFSET, nativeMemory.asSlice(Bindings.CELLS.byteSize() + inputOffset));
+        Bindings.setSize(nativeMemory, Bindings.IN_SIZE_OFFSET, inputLength - inputOffset);
+        Bindings.setSize(nativeMemory, Bindings.OUT_SIZE_OFFSET, 0);
         int status;
         try {
             status = (int) Bindings.DECOMPRESS_STREAM.invokeExact(
-                    state, inSize, in, outSize, MemorySegment.NULL, MemorySegment.NULL);
+                    state, cell(Bindings.IN_SIZE_OFFSET), cell(Bindings.IN_OFFSET),
+                    cell(Bindings.OUT_SIZE_OFFSET), MemorySegment.NULL, MemorySegment.NULL);
         } catch (Throwable t) {
             throw new AssertionError(t);
         }
-        inputOffset = inputLength - Bindings.getSize(inSize);
+        inputOffset = inputLength - Bindings.getSize(nativeMemory, Bindings.IN_SIZE_OFFSET);
         switch (status) {
             case RESULT_SUCCESS:
                 /* Bytes after stream end are not allowed. */
@@ -166,10 +159,10 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
      * Pull decompressed data from decoder, optionally capped to maxBytes (0: all available output).
      */
     private ByteBuffer pullImpl(long[] context, long maxBytes) {
-        Bindings.setSize(dataLength, maxBytes);
+        Bindings.setSize(nativeMemory, Bindings.DATA_LENGTH_OFFSET, maxBytes);
         MemorySegment data;
         try {
-            data = (MemorySegment) Bindings.TAKE_OUTPUT.invokeExact(state, dataLength);
+            data = (MemorySegment) Bindings.TAKE_OUTPUT.invokeExact(state, cell(Bindings.DATA_LENGTH_OFFSET));
         } catch (Throwable t) {
             throw new AssertionError(t);
         }
@@ -186,7 +179,7 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         context[2] = hasMoreOutput ? 1 : 0;
         // NewDirectByteBuffer: big-endian view of brotli's output, valid until the next call.
         // Brotli owns the output. Like JNI, this view becomes invalid after destroy.
-        return data.reinterpret(Bindings.getSize(dataLength)).asByteBuffer();
+        return data.reinterpret(Bindings.getSize(nativeMemory, Bindings.DATA_LENGTH_OFFSET)).asByteBuffer();
     }
 
     @Override
@@ -215,11 +208,11 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
             throw new AssertionError(t);
         } finally {
             // Keep RAW dictionary storage reachable until DestroyInstance has completed.
-            dictionaryRefs.clear();
+            dictionaryRefs = null;
             try {
-                if (allocation.address() != 0) {
-                    Bindings.FREE.invokeExact(allocation);
-                    allocation = MemorySegment.NULL;
+                if (nativeMemory.address() != 0) {
+                    Bindings.FREE.invokeExact(nativeMemory);
+                    nativeMemory = MemorySegment.NULL;
                 }
             } catch (Throwable t) {
                 throw new AssertionError(t);
@@ -236,11 +229,14 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         if (dictionary == null) {
             ok = false;
         }
-        if (ok && dictionaryRefs.size() >= MAX_DICTIONARIES) {
+        if (ok && dictionaryRefs != null && dictionaryRefs.size() >= MAX_DICTIONARIES) {
             ok = false;
         }
         // NewGlobalRef of a non-null object only fails when the JVM is out of memory.
         if (ok) {
+            if (dictionaryRefs == null) {
+                dictionaryRefs = new ArrayList<>(MAX_DICTIONARIES);
+            }
             dictionaryRefs.add(dictionary);
             // GetDirectBufferAddress: NULL for a heap buffer.
             if (dictionary.isDirect()) {
@@ -262,6 +258,14 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         }
 
         return ok;
+    }
+
+    /**
+     * A per-call slice of a cell in {@link #nativeMemory}, for a pointer argument. Cells are as wide as
+     * {@code size_t} and pointers. The JIT (C2) removes the allocation; storing slices would cost ~200 B per wrapper.
+     */
+    private MemorySegment cell(long offset) {
+        return nativeMemory.asSlice(offset, Bindings.SIZE_T.byteSize());
     }
 
     private boolean hasMoreOutput() {
@@ -338,17 +342,17 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
             return SIZE_T.byteSize() == Integer.BYTES ? value & 0xFFFFFFFFL : value;
         }
 
-        static long getSize(MemorySegment cell) {
+        static long getSize(MemorySegment segment, long offset) {
             return SIZE_T instanceof ValueLayout.OfLong layout
-                    ? cell.get(layout, 0)
-                    : Integer.toUnsignedLong(cell.get((ValueLayout.OfInt) SIZE_T, 0));
+                    ? segment.get(layout, offset)
+                    : Integer.toUnsignedLong(segment.get((ValueLayout.OfInt) SIZE_T, offset));
         }
 
-        static void setSize(MemorySegment cell, long value) {
+        static void setSize(MemorySegment segment, long offset, long value) {
             if (SIZE_T instanceof ValueLayout.OfLong layout) {
-                cell.set(layout, 0, value);
+                segment.set(layout, offset, value);
             } else {
-                cell.set((ValueLayout.OfInt) SIZE_T, 0, (int) value);
+                segment.set((ValueLayout.OfInt) SIZE_T, offset, (int) value);
             }
         }
 
