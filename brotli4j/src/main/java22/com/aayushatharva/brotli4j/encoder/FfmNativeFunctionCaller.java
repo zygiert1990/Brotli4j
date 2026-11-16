@@ -89,12 +89,13 @@ final class FfmNativeFunctionCaller implements NativeFunctionCaller {
         long allocationSize = Bindings.CELLS.byteSize() + inputSize;
         boolean created = false;
         try {
-            MemorySegment allocation = (MemorySegment) Bindings.MALLOC.invokeExact(allocationSize);
-            if (allocation.address() == 0) {
+            // Record ownership before reinterpretation so failed construction can free the block.
+            nativeMemory = (MemorySegment) Bindings.MALLOC.invokeExact(allocationSize);
+            if (nativeMemory.address() == 0) {
                 return null;
             }
             // malloc aligns the cells; input bytes need no additional alignment or zeroing.
-            nativeMemory = allocation.reinterpret(allocationSize);
+            nativeMemory = nativeMemory.reinterpret(allocationSize);
             state = (MemorySegment) Bindings.CREATE_INSTANCE.invokeExact(
                     MemorySegment.NULL, MemorySegment.NULL, MemorySegment.NULL);
             if (state.address() == 0) {
